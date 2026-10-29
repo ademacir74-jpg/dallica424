@@ -23,3 +23,11 @@ messaging.onBackgroundMessage((payload) => {
 
     self.registration.showNotification(title, options);
 });
+messaging.onBackgroundMessage((payload) => {
+    const title = payload.notification?.title || payload.data?.title || 'Dallıca 424 TOKİ';
+    const options = {
+        body: payload.notification?.body || payload.data?.body || 'Yeni bildiriminiz var.',
+        icon: '/icon.png'
+    };
+    self.registration.showNotification(title, options);
+});
