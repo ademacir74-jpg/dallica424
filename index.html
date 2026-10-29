@@ -290,6 +290,8 @@
         let user = null;
         function toggleModal(id) { document.getElementById(id)?.classList.toggle('hidden'); }
         function loginTabDegistir(tip) {
+            document.getElementById('tab-malik-btn').className = tip === 'malik' ? "w-1/2 py-2.5 text-xs font-bold rounded-lg bg-white shadow text-emerald-800" : "w-1/2 py-2.5 text-xs font-bold rounded-lg text-slate-500";
+            document.getElementById('tab-yonetici-btn').className = tip === 'yonetici' ? "w-1/2 py-2.5 text-xs font-bold rounded-lg bg-white shadow text-slate-800" : "w-1/2 py-2.5 text-xs font-bold rounded-lg text-slate-500";
             document.getElementById('form-malik-giris').classList.toggle('hidden', tip !== 'malik');
             document.getElementById('form-yonetici-giris').classList.toggle('hidden', tip !== 'yonetici');
         }
@@ -301,12 +303,19 @@
         }
         function yoneticiGirisYap(e) {
             e.preventDefault();
-            if(document.getElementById('giris-sifre').value === '424424') { user = { rol: 'yonetici', blok: 'Yönetim', daire: 'Merkez' }; oturumAc(); }
-            else { alert('Hatalı Şifre!'); }
+            const sifre = document.getElementById('giris-sifre').value.trim();
+            if(sifre === '424424') { 
+                user = { rol: 'yonetici', blok: 'Yönetim', daire: 'Merkez' }; 
+                oturumAc(); 
+            } else { 
+                alert('Hatalı Yönetici Şifresi!'); 
+            }
         }
         function oturumAc() {
             document.getElementById('login-screen').classList.add('hidden');
             const isAdmin = user.rol === 'yonetici';
+            document.getElementById('user-role-text').innerText = isAdmin ? 'Yönetici' : user.adSoyad || 'Kat Maliki';
+            document.getElementById('user-info-text').innerText = `${user.blok} / ${user.daire}`;
             ['btn-duyuru-ekle', 'btn-aidat-guncelle', 'btn-kasa-ekle', 'btn-anket-ekle', 'btn-daire-ekle'].forEach(id => {
                 document.getElementById(id)?.classList.toggle('hidden', !isAdmin);
             });
