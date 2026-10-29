@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Dallıca 424 TOKİ Yönetimi</title>
+    
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="theme-color" content="#065f46">
+
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    
+    <style>
+        body { font-family: 'Inter', sans-serif; -webkit-tap-highlight-color: transparent; }
+        ::-webkit-scrollbar { width: 4px; height: 4px; }
+        ::-webkit-scrollbar-track { background: #f1f1f1; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+        .scrollbar-none::-webkit-scrollbar { display: none; }
+        .scrollbar-none { -ms-overflow-style: none; scrollbar-width: none; }
+    </style>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+        import { getDatabase, ref, set, push, onValue, remove, get, child, update, serverTimestamp, runTransaction } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
+        import { getMessaging, onMessage } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-messaging.js";
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyCUn1nmXERfUiXUh2vRAj-otN-5R7S_COI",
+            authDomain: "dallica424site.firebaseapp.com",
+            databaseURL: "https://dallica424site-default-rtdb.europe-west1.firebasedatabase.app",
+            projectId: "dallica424site",
+            storageBucket: "dallica424site.firebasestorage.app",
+            messagingSenderId: "386632929463",
+            appId: "1:386632929463:web:254fbd71516164c4413d32",
+            measurementId: "G-J6BJGTRVMF"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const db = getDatabase(app);
+
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('./firebase-messaging-sw.js')
+                    .then(registration => {
+                        console.log('Service Worker kaydoldu:', registration);
+                        try {
+                            const messaging = getMessaging(app);
+                            onMessage(messaging, (payload) => {
+                                if (payload.notification) {
+                                    new Notification(payload.notification.title, {
+                                        body: payload.notification.body,
+                                        icon: '/icon.png'
+                                    });
+                                }
+                            });
+                        } catch (e) {}
+                    });
+            });
+        }
+
+        window.tokiAPI = {
+            duyuruEkle: async (baslik, icerik, onemli) => {
+                const duyuru = await push(ref(db, 'duyurular'), { baslik, icerik, onemli, tarih: new Date().toLocaleDateString('tr-TR'), timestamp: serverTimestamp() });
+                const daireSnap = await get(ref(db, 'daireler'));
+                if (daireSnap.exists()) await Promise.all(Object.values(daireSnap.val()).map(sakin => push(ref(db, `bildirimler/${sakin.blok}_${sakin.daire}`), { baslik: onemli ? `Acil duyuru: ${baslik}` : `Yeni duyuru: ${baslik}`, mesaj: icerik, tarih: Date.now(), okundu: false, tur: 'duyuru' })));
+                return duyuru;
+            },
+            duyuruSil: (id) => remove(ref(db, `duyurular/${id}`)),
+            
+            arizaEkle: async (blok, daire, aciklama, tip, adSoyad = '') => {
+                const yeni = await push(ref(db, 'arizalar'), { blok, daire, aciklama, tip, adSoyad, durum: 'Beklemede', tarih: new Date().toLocaleDateString('tr-TR') + ' ' + new Date().toLocaleTimeString('tr-TR', {hour: '2-digit', minute:'2-digit'}), timestamp: serverTimestamp() });
+                await push(ref(db, 'bildirimler/Yönetim_Merkez'), { baslik: 'Yeni arıza bildirimi', mesaj: `${blok} / Daire ${daire} · ${tip}: ${aciklama}`, tarih: Date.now(), okundu: false, tur: 'ariza', arizaId: yeni.key });
+                return yeni;
+            },
+            arizaDurumGuncelle: async (id, durum) => {
+                const arizaRef = ref(db, `arizalar/${id}`);
+                const snap = await get(arizaRef);
+                if (!snap.exists()) throw new Error('Arıza kaydı bulunamadı.');
+                const a = snap.val();
+                await update(arizaRef, { durum, durumGuncellemeZamani: Date.now() });
+                await push(ref(db, `bildirimler/${a.blok}_${a.daire}`), { baslik: 'Arıza bildiriminizin durumu güncellendi', mesaj: `${a.tip || 'Arıza'} bildiriminiz: ${durum}.`, tarih: Date.now(), okundu: false, tur: 'ariza' });
+            },
+            arizaSil: (id) => remove(ref(db, `arizalar/${id}`)),
+
+            aidatGuncelle: (blok, daire, ay, durum) => set(ref(db, `aidatlar/${blok}_${daire}_${ay}`), { blok, daire, ay, durum, guncellemeTarihi: new Date().toLocaleDateString('tr-TR') }),
+            aidatSil: (id) => remove(ref(db, `aidatlar/${id}`)),
+
+            kasaEkle: (tip, aciklama, miktar) => push(ref(db, 'kasa'), { tip, aciklama, miktar, tarih: new Date().toLocaleDateString('tr-TR'), timestamp: serverTimestamp() }),
+            kasaSil: (id) => remove(ref(db, `kasa/${id}`)),
+
+            anketEkle: async (soru, secenekler) => {
+                const anket = await push(ref(db, 'anketler'), { soru, secenekler, oylar: {}, tarih: new Date().toLocaleDateString('tr-TR') });
+                const daireSnap = await get(ref(db, 'daireler'));
+                if (daireSnap.exists()) await Promise.all(Object.values(daireSnap.val()).map(sakin => push(ref(db, `bildirimler/${sakin.blok}_${sakin.daire}`), { baslik: 'Yeni anket açıldı', mesaj: soru, tarih: Date.now(), okundu: false, tur: 'anket' })));
+                return anket;
+            },
+            anketOyVer: async (anketId, secenekIndex, userKey) => {
+                const result = await runTransaction(ref(db, `anketler/${anketId}/oylar/${userKey}`), current => current === null ? secenekIndex : undefined);
+                if (!result.committed) throw new Error('Bu ankette daha önce oy kullanılmış.');
+                return true;
+            },
+            anketSil: (id) => remove(ref(db, `anketler/${id}`)),
+
+            daireEkle: async (blok, daire, adSoyad, telefon, tcKimlik, durum) => {
+                const sifre = Math.floor(100000 + Math.random() * 900000).toString();
+                await set(ref(db, `daireler/${tcKimlik}`), { blok, daire, adSoyad, telefon, tcKimlik, sifre, durum, tarih: new Date().toLocaleDateString('tr-TR') });
+                return sifre;
+            },
+            daireSil: (id) => remove(ref(db, `daireler/${id}`)),
+            
+            malikGirisKontrol: async (tcKimlik, sifre) => {
+                const dbRef = ref(db);
+                const snapshot = await get(child(dbRef, `daireler/${tcKimlik}`));
+                if (snapshot.exists()) {
+                    const data = snapshot.val();
+                    if (data.sifre === sifre) {
+                        return { success: true, user: data };
+                    } else {
+                        return { success: false, msg: "Şifre hatalı!" };
+                    }
+                } else {
+                    return { success: false, msg: "Sistemde kayıtlı TC Kimlik No bulunamadı!" };
+                }
+            },
+
+            dinleDuyurular: (cb) => onValue(ref(db, 'duyurular'), snap => cb(snap.val())),
+            dinleArizalar: (cb) => onValue(ref(db, 'arizalar'), snap => cb(snap.val())),
+            dinleAidatlar: (cb) => onValue(ref(db, 'aidatlar'), snap => cb(snap.val())),
+            dinleKasa: (cb) => onValue(ref(db, 'kasa'), snap => cb(snap.val())),
+            dinleAnketler: (cb) => onValue(ref(db, 'anketler'), snap => cb(snap.val())),
+            dinleDaireler: (cb) => onValue(ref(db, 'daireler'), snap => cb(snap.val())),
+
+            odemeTalebiEkle: async (talep) => {
+                if (!talep.blok || !talep.daire || !talep.ay) throw new Error('Eksik bilgi.');
+                if (!Number.isFinite(Number(talep.tutar)) || Number(talep.tutar) <= 0) throw new Error('Geçersiz tutar.');
+                const yeniRef = push(ref(db, 'odemeTalepleri'));
+                await set(yeniRef, { ...talep, durum: 'Onay Bekliyor', olusturmaZamani: Date.now() });
+                await push(ref(db, 'bildirimler/Yönetim_Merkez'), {
+                    baslik: 'Yeni aidat ödeme bildirimi',
+                    mesaj: `${talep.blok} / Daire ${talep.daire} · ${talep.ay} · ₺${Number(talep.tutar).toLocaleString('tr-TR')}`,
+                    tarih: Date.now(), okundu: false, tur: 'odeme', odemeTalebiId: yeniRef.key
+                });
+                return yeniRef.key;
+            },
+            odemeTalebiKarar: async (id, karar, notlar = '') => {
+                const talepRef = ref(db, `odemeTalepleri/${id}`);
+                const snap = await get(talepRef);
+                if (!snap.exists()) return;
+                const t = snap.val();
+                await update(talepRef, { durum: karar, yoneticiNotu: notlar, kararZamani: Date.now() });
+                if (karar === 'Onaylandı') {
+                    const aidatKey = `${t.blok}_${t.daire}_${t.ay}`;
+                    await set(ref(db, `aidatlar/${aidatKey}`), { blok: t.blok, daire: t.daire, ay: t.ay, durum: 'Ödendi', tutar: Number(t.tutar), guncellemeTarihi: new Date().toLocaleDateString('tr-TR') });
+                    await push(ref(db, 'kasa'), { tip: 'Gelir', aciklama: `Aidat - ${t.blok} / Daire ${t.daire} - ${t.ay}`, miktar: Number(t.tutar), tarih: new Date().toLocaleDateString('tr-TR'), timestamp: serverTimestamp() });
+                }
+                await push(ref(db, `bildirimler/${t.blok}_${t.daire}`), { baslik: karar === 'Onaylandı' ? 'Aidat ödemeniz onaylandı' : 'Aidat talebiniz reddedildi', mesaj: `${t.ay} dönemi aidat ödemeniz ${karar.toLowerCase()}.`, tarih: Date.now(), okundu: false });
+            },
+            dinleOdemeTalepleri: (cb) => onValue(ref(db, 'odemeTalepleri'), snap => cb(snap.val())),
+            bildirimEkle: (blok, daire, bildirim) => push(ref(db, `bildirimler/${blok}_${daire}`), bildirim),
+            dinleBildirimler: (blok, daire, cb) => onValue(ref(db, `bildirimler/${blok}_${daire}`), snap => cb(snap.val())),
+            bildirimOku: (id, blok, daire) => update(ref(db, `bildirimler/${blok}_${daire}/${id}`), { okundu: true })
+        };
+    </script>
+</head>
+<body class="bg-slate-100 min-h-screen text-slate-800 flex flex-col items-center select-none">
+    <div class="w-full max-w-md bg-white min-h-screen shadow-2xl flex flex-col justify-between relative pb-20">
+        
+        <div id="login-screen" class="absolute inset-0 bg-white z-50 flex flex-col justify-center p-6 space-y-6">
+            <div class="text-center space-y-2">
+                <h1 class="text-2xl font-bold text-slate-800">Dallıca 424 TOKİ</h1>
+                <p class="text-xs text-slate-500 font-medium">Bartın Site Yönetimi Portalı</p>
+            </div>
+
+            <div class="flex bg-slate-100 p-1 rounded-xl">
+                <button id="tab-malik-btn" onclick="loginTabDegistir('malik')" class="w-1/2 py-2.5 text-xs font-bold rounded-lg bg-white shadow text-emerald-800">Kat Maliki Girişi</button>
+                <button id="tab-yonetici-btn" onclick="loginTabDegistir('yonetici')" class="w-1/2 py-2.5 text-xs font-bold rounded-lg text-slate-500">Yönetici Girişi</button>
+            </div>
+
+            <form id="form-malik-giris" onsubmit="malikGirisYap(event)" class="space-y-3">
+                <div>
+                    <label class="text-[11px] font-semibold text-slate-600 block mb-1">T.C. Kimlik Numarası</label>
+                    <input type="text" id="giris-tc" maxlength="11" placeholder="11 Haneli TC Kimlik No" required class="w-full text-xs p-3 border border-slate-300 rounded-xl focus:outline-emerald-600">
+                </div>
+                <div>
+                    <label class="text-[11px] font-semibold text-slate-600 block mb-1">Sistem Şifresi</label>
+                    <input type="password" id="giris-malik-sifre" placeholder="Şifrenizi Giriniz" required class="w-full text-xs p-3 border border-slate-300 rounded-xl focus:outline-emerald-600">
+                </div>
+                <div id="login-error-msg" class="text-xs text-red-600 font-medium hidden"></div>
+                <button type="submit" id="btn-malik-login" class="w-full bg-emerald-700 text-white font-bold py-3.5 text-xs rounded-xl hover:bg-emerald-800 transition shadow-md">
+                    Sisteme Güvenli Giriş Yap
+                </button>
+            </form>
+
+            <form id="form-yonetici-giris" onsubmit="yoneticiGirisYap(event)" class="space-y-3 hidden">
+                <div>
+                    <label class="text-[11px] font-semibold text-slate-600 block mb-1">Yönetici Şifresi</label>
+                    <input type="password" id="giris-sifre" placeholder="Şifrenizi Giriniz" required class="w-full text-xs p-3 border border-slate-300 rounded-xl focus:outline-emerald-600">
+                </div>
+                <button type="submit" class="w-full bg-slate-800 text-white font-bold py-3.5 text-xs rounded-xl hover:bg-slate-900 transition shadow-md">
+                    Yönetici Girişi Yap
+                </button>
+            </form>
+        </div>
+
+        <header class="bg-emerald-800 text-white p-4 sticky top-0 z-40 shadow-md">
+            <div class="flex items-center justify-between">
+                <div>
+                    <h1 class="font-bold text-base leading-tight">Dallıca 424 TOKİ</h1>
+                    <p class="text-xs text-emerald-200"><i class="fa-solid fa-location-dot text-red-400 me-1"></i>Bartın Site Yönetimi</p>
+                </div>
+                <div class="flex items-center gap-2">
+                    <div class="text-right">
+                        <p id="user-role-text" class="text-[11px] font-bold text-white">Sakin</p>
+                        <p id="user-info-text" class="text-[9px] text-emerald-200">Blok/Daire</p>
+                    </div>
+                    <button onclick="cikisYap()" class="w-7 h-7 bg-emerald-900/80 rounded-full flex items-center justify-center text-xs"><i class="fa-solid fa-right-from-bracket"></i></button>
+                </div>
+            </div>
+
+            <div class="flex space-x-2 mt-3 overflow-x-auto pb-1 text-[11px] scrollbar-none">
+                <button onclick="tabDegistir('duyurular')" class="px-3 py-1 rounded-full bg-emerald-700 text-white font-medium whitespace-nowrap">📢 Duyurular</button>
+                <button onclick="tabDegistir('ariza')" class="px-3 py-1 rounded-full bg-emerald-900/60 text-emerald-200 font-medium whitespace-nowrap">🛠️ Arızalar</button>
+                <button onclick="tabDegistir('aidat')" class="px-3 py-1 rounded-full bg-emerald-900/60 text-emerald-200 font-medium whitespace-nowrap">📊 Aidat Takibi</button>
+                <button onclick="tabDegistir('kasa')" class="px-3 py-1 rounded-full bg-emerald-900/60 text-emerald-200 font-medium whitespace-nowrap">💰 Kasa</button>
+                <button onclick="tabDegistir('anket')" class="px-3 py-1 rounded-full bg-emerald-900/60 text-emerald-200 font-medium whitespace-nowrap">📋 Anket</button>
+                <button onclick="tabDegistir('daireler')" class="px-3 py-1 rounded-full bg-emerald-900/60 text-emerald-200 font-medium whitespace-nowrap">🏢 Daireler</button>
+            </div>
+        </header>
+
+        <main class="p-4 flex-1">
+            <section id="tab-duyurular" class="tab-content space-y-4">
+                <div class="flex justify-between items-center">
+                    <h2 class="font-bold text-slate-700">📢 Site Duyuruları</h2>
+                    <button id="btn-duyuru-ekle" onclick="toggleModal('modal-duyuru')" class="text-xs bg-emerald-100 text-emerald-800 px-2.5 py-1 rounded-md font-medium hidden">+ Duyuru Ekle</button>
+                </div>
+                <div id="duyuru-listesi" class="space-y-3"></div>
+            </section>
+
+            <section id="tab-ariza" class="tab-content hidden space-y-4">
+                <div class="flex justify-between items-center">
+                    <h2 class="font-bold text-slate-700">🛠️ Arıza Bildirimleri</h2>
+                    <button onclick="toggleModal('modal-ariza')" class="text-xs bg-emerald-600 text-white px-3 py-1.5 rounded-lg font-medium shadow">+ Bildirim Oluştur</button>
+                </div>
+                <div id="ariza-listesi" class="space-y-3"></div>
+            </section>
+
+            <section id="tab-aidat" class="tab-content hidden space-y-4">
+                <div class="flex justify-between items-center">
+                    <h2 class="font-bold text-slate-700">📊 Aidat Çizelgesi</h2>
+                    <button id="btn-aidat-guncelle" onclick="toggleModal('modal-aidat')" class="text-xs bg-slate-100 text-slate-700 px-2.5 py-1.5 rounded-lg border hidden">Durum Gir</button>
+                </div>
+                <div id="bildirim-panel" class="p-3 bg-slate-50 border rounded-xl space-y-2">
+                    <div class="flex items-center justify-between"><h3 class="font-bold text-sm">🔔 Bildirimler</h3><button type="button" onclick="bildirimIzniniAc()" class="text-[10px] px-2 py-1 rounded bg-emerald-100 text-emerald-800 font-bold">Bildirim İznini Aç</button></div>
+                    <div id="bildirim-listesi" class="space-y-2"></div>
+                </div>
+                <div id="aidat-listesi" class="space-y-2"></div>
+            </section>
+
+            <section id="tab-kasa" class="tab-content hidden space-y-4">
+                <div class="flex justify-between items-center">
+                    <h2 class="font-bold text-slate-700">💰 Kasa & Finans</h2>
+                    <button id="btn-kasa-ekle" onclick="toggleModal('modal-kasa')" class="text-xs bg-emerald-100 text-emerald-800 px-2.5 py-1 rounded-md font-medium hidden">+ İşlem Ekle</button>
+                </div>
+                <div id="kasa-listesi" class="space-y-2"></div>
+            </section>
+
+            <section id="tab-anket" class="tab-content hidden space-y-4">
+                <div class="flex justify-between items-center">
+                    <h2 class="font-bold text-slate-700">📋 Anketler</h2>
+                    <button id="btn-anket-ekle" onclick="toggleModal('modal-anket')" class="text-xs bg-emerald-100 text-emerald-800 px-2.5 py-1 rounded-md font-medium hidden">+ Anket Aç</button>
+                </div>
+                <div id="anket-listesi" class="space-y-3"></div>
+            </section>
+
+            <section id="tab-daireler" class="tab-content hidden space-y-4">
+                <div class="flex justify-between items-center">
+                    <h2 class="font-bold text-slate-700">🏢 Daireler & Sakinler</h2>
+                    <button id="btn-daire-ekle" onclick="toggleModal('modal-daire')" class="text-xs bg-emerald-600 text-white px-3 py-1.5 rounded-lg font-medium shadow hidden">+ Sakin Ekle</button>
+                </div>
+                <div id="daire-listesi" class="space-y-2"></div>
+            </section>
+        </main>
+    </div>
+
+    <script>
+        let user = null;
+        function toggleModal(id) { document.getElementById(id)?.classList.toggle('hidden'); }
+        function loginTabDegistir(tip) {
+            document.getElementById('form-malik-giris').classList.toggle('hidden', tip !== 'malik');
+            document.getElementById('form-yonetici-giris').classList.toggle('hidden', tip !== 'yonetici');
+        }
+        async function malikGirisYap(e) {
+            e.preventDefault();
+            const res = await window.tokiAPI.malikGirisKontrol(document.getElementById('giris-tc').value.trim(), document.getElementById('giris-malik-sifre').value.trim());
+            if(res.success) { user = { rol: 'malik', blok: res.user.blok, daire: res.user.daire, adSoyad: res.user.adSoyad }; oturumAc(); }
+            else { alert(res.msg); }
+        }
+        function yoneticiGirisYap(e) {
+            e.preventDefault();
+            if(document.getElementById('giris-sifre').value === '424424') { user = { rol: 'yonetici', blok: 'Yönetim', daire: 'Merkez' }; oturumAc(); }
+            else { alert('Hatalı Şifre!'); }
+        }
+        function oturumAc() {
+            document.getElementById('login-screen').classList.add('hidden');
+            const isAdmin = user.rol === 'yonetici';
+            ['btn-duyuru-ekle', 'btn-aidat-guncelle', 'btn-kasa-ekle', 'btn-anket-ekle', 'btn-daire-ekle'].forEach(id => {
+                document.getElementById(id)?.classList.toggle('hidden', !isAdmin);
+            });
+            if(window.tokiAPI?.dinleBildirimler) window.tokiAPI.dinleBildirimler(user.blok, user.daire, () => {});
+        }
+        function cikisYap() { location.reload(); }
+        function tabDegistir(tab) {
+            document.querySelectorAll('.tab-content').forEach(el => el.classList.add('hidden'));
+            document.getElementById(`tab-${tab}`)?.classList.remove('hidden');
+        }
+        function bildirimIzniniAc() {
+            if ('Notification' in window) Notification.requestPermission().then(p => alert(p === 'granted' ? 'İzin verildi!' : 'İzin verilmedi.'));
+        }
+    </script>
+</body>
+</html>
